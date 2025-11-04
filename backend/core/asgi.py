@@ -40,38 +40,40 @@ class SessionAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        # Only process websocket connections
         if scope['type'] != 'websocket':
             return await self.app(scope, receive, send)
         
-        # Extract cookies from headers
-        headers = dict(scope.get('headers', []))
-        cookie_header = headers.get(b'cookie', b'').decode('utf-8')
+        session_key = None
         
-        # Parse cookies
-        cookies = {}
-        for cookie_part in cookie_header.split(';'):
-            if '=' in cookie_part:
-                name, value = cookie_part.strip().split('=', 1)
-                cookies[name] = value
-        
-        logger.info(f"🔍 Parsed cookies: {list(cookies.keys())}")
-        
-        # Try to get sessionid from cookies
-        session_key = cookies.get('sessionid')
-        
+        # Try to get the session key from the query string
+        #    e.g., ws://.../?session=xxx
+        query_string = scope.get('query_string', b'').decode('utf-8')
+        query_params = dict(param.split('=') for param in query_string.split('&') if '=' in param)
+        session_key = query_params.get('session')
+
         if session_key:
-            logger.info(f"🔍 Found sessionid in cookies: {session_key}")
-            # Load user from session
+            logger.info(f"🔍 Found session key in query string: {session_key}")
+        
+        # IF it's not in the query string, fall back to checking the cookies
+        if not session_key:
+            headers = dict(scope.get('headers', []))
+            cookie_header = headers.get(b'cookie', b'').decode('utf-8')
+            cookies = dict(cookie.split('=') for cookie in cookie_header.split(';') if '=' in cookie)
+            session_key = cookies.get('sessionid')
+            if session_key:
+                 logger.info(f"🔍 Found sessionid in cookies: {session_key}")
+
+        # Authenticate the user based on the session key we found
+        if session_key:
             user = await self.get_user_from_session(session_key)
             if user:
                 logger.info(f"✅ Authenticated user from session: {user.username} (ID: {user.id})")
                 scope['user'] = user
             else:
-                logger.warning(f"⚠️ Session {session_key} found but no user")
+                logger.warning(f"⚠️ Session {session_key} found but no user associated with it.")
                 scope['user'] = AnonymousUser()
         else:
-            logger.warning("⚠️ No sessionid cookie found")
+            logger.warning("⚠️ No session key found in query string or cookies.")
             scope['user'] = AnonymousUser()
         
         return await self.app(scope, receive, send)

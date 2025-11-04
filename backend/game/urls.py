@@ -9,6 +9,7 @@ from .views import (
     CompleteGameView,
     UserStatsView,
     LeaderboardView,
+    UserAIProfileView
 )
 
 urlpatterns = [
@@ -21,4 +22,6 @@ urlpatterns = [
     path('complete-game/', CompleteGameView.as_view(), name='complete-game'),
     path('user-stats/', UserStatsView.as_view(), name='user-stats'),
     path('leaderboard/', LeaderboardView.as_view(), name='leaderboard'),
+    
+    path('user-ai-profile/', UserAIProfileView.as_view(), name='user-ai-profile'),
 ]

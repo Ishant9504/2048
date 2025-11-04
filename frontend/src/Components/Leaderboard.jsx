@@ -7,63 +7,66 @@ export default function Leaderboard() {
     const [error, setError] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
 
-    const loadLeaderboard = async () => {
-        if (!refreshing) {
-            setLoading(true);
-        }
-        setError(null);
-        
-        console.log("Fetching leaderboard data...");
-        try {
-            const result = await getLeaderboard('high_score', 10);
-            console.log("Leaderboard API response:", result);
+    const modes = ['total', 'human', 'ai'];
+    const modeDetails = {
+        total: { label: 'Total Score', color: 'text-yellow-400' },
+        human: { label: 'Human Score', color: 'text-blue-400' },
+        ai: { label: 'AI Score', color: 'text-purple-400' }
+    };
+    const [mode, setMode] = useState('total'); 
 
-            if (result.success) {
-                console.log("Leaderboard data loaded successfully:", result.data);
-                console.log("Leaderboard entries:", JSON.stringify(result.data, null, 2));
-                setLeaders(result.data);
+    const fetchLeaderboard = async (currentMode) => {
+        // if (isManualRefresh) {
+        //     setRefreshing(true);
+        // } else {
+        //     setLoading(true);
+        // }
+        setError(null);
+        try {
+            const data = await getLeaderboard(currentMode);
+            if (Array.isArray(data)) {
+                setLeaders(data);
             } else {
-                console.error("Failed to load leaderboard:", result.error);
-                setError(result.error || 'Could not load leaderboard.');
+                // This is a safety net in case the API returns something unexpected
+                console.error("API did not return an array for leaderboard:", data);
+                setLeaders([]); 
             }
         } catch (err) {
-            console.error("Exception during leaderboard fetch:", err);
-            setError("Network error while loading leaderboard.");
+            setError('Failed to load leaderboard.');
+            console.error(err);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
     };
+    const handleManualRefresh = () => {
+        fetchLeaderboard(true);
+    };
+
+    const handleModeToggle = () => {
+        const currentIndex = modes.indexOf(mode);
+        const nextIndex = (currentIndex + 1) % modes.length;
+        setMode(modes[nextIndex]);
+    };
 
     useEffect(() => {
-        console.log("Leaderboard: Setting up (should see this ONCE)");
-        loadLeaderboard();
-        
-        const handleGameCompleted = () => {
-            console.log("Game completed - refreshing leaderboard");
-            setRefreshing(true);
-            loadLeaderboard();
-        };
-        
-        window.addEventListener('game-completed', handleGameCompleted);
-        
-        const intervalId = setInterval(() => {
-            console.log("Leaderboard: Auto-refresh triggered");
-            setRefreshing(true);
-            loadLeaderboard();
-        }, 120000);
-        
-        return () => {
-            console.log("Leaderboard: Cleanup");
-            window.removeEventListener('game-completed', handleGameCompleted);
-            clearInterval(intervalId);
-        };
-    }, []);
+        fetchLeaderboard(mode);
 
-    const handleManualRefresh = () => {
-        setRefreshing(true);
-        loadLeaderboard();
-    };
+        const handleGameCompleted = () => {
+            console.log("Leaderboard: 'game-completed' event received. Refreshing data...");
+            setTimeout(() => {
+                fetchLeaderboard(mode);
+            }, 1000); // 1-second delay
+        };
+        window.addEventListener('game-completed', handleGameCompleted);
+
+        // Cleanup: remove the event listener when the component unmounts
+        return () => {
+            window.removeEventListener('game-completed', handleGameCompleted);
+        };
+        // const interval = setInterval(fetchLeaderboard, 60000); // Refresh every 60 seconds
+        // return () => clearInterval(interval);
+    }, [mode]);
 
     const renderContent = () => {
         if (loading && !refreshing) {
@@ -104,14 +107,20 @@ export default function Leaderboard() {
 
         return (
             <div className="space-y-2">
-                {leaders.map((game, idx) => {
-                    const rank = game.rank || idx + 1;
+                {leaders.map((entry, idx) => {
+                    const rank = entry.rank || idx + 1;
                     const isTop3 = rank <= 3;
+
+                    let displayScore = 0;
+                    if (mode === 'human') displayScore = entry.human_score;
+                    else if (mode === 'ai') displayScore = entry.ai_score;
+                    else displayScore = entry.total_score;
+
                     
                     return (
                         <div 
                             key={idx} 
-                            className={`p-3 rounded-lg transition-all ${
+                            className={`group p-3 rounded-lg transition-all ${
                                 rank === 1 
                                     ? 'bg-gradient-to-r from-yellow-500/20 to-amber-500/20 border border-yellow-500/30' 
                                     : rank === 2
@@ -131,28 +140,30 @@ export default function Leaderboard() {
                                     
                                     <div className="flex-1 min-w-0">
                                         <div className="font-semibold text-gray-200 truncate">
-                                            {game.user}
+                                            {entry.username}
                                         </div>
-                                        {game.games_played && (
+                                        {entry.games_played && (
                                             <div className="text-xs text-gray-500">
-                                                {game.games_played} games
+                                                {entry.games_played} games
                                             </div>
                                         )}
                                     </div>
                                 </div>
                                 
-                                <div className="text-right flex-shrink-0">
-                                    <div className={`font-bold text-lg ${
-                                        rank === 1 ? 'text-yellow-400' :
-                                        rank === 2 ? 'text-slate-300' :
-                                        rank === 3 ? 'text-orange-400' :
-                                        'text-blue-400'
-                                    }`}>
-                                        {game.high_score?.toLocaleString() || 0}
+                                <div className="relative text-right flex-shrink-0 w-24">
+                                    {/* --- MAIN SCORE DISPLAY --- */}
+                                    {/* Shows the score relevant to the current mode */}
+                                    <div className={`font-bold text-lg transition-opacity duration-300 ${mode === 'total' ? 'group-hover:opacity-0' : ''} ${modeDetails[mode].color}`}>
+                                        {displayScore?.toLocaleString() || 0}
                                     </div>
-                                    {game.points && (
-                                        <div className="text-xs text-gray-500">
-                                            {game.points} pts
+                                    
+                                    {/* --- HOVER BREAKDOWN --- */}
+                                    {/* Only appears when in 'total' mode */}
+                                    {mode === 'total' && (
+                                        <div className="absolute top-0 right-0 h-full flex items-center justify-end gap-1 transition-opacity duration-300 opacity-0 group-hover:opacity-100">
+                                            <span className="text-sm font-semibold text-blue-400">{entry.human_score}</span>
+                                            <span className="text-xs text-gray-400">+</span>
+                                            <span className="text-sm font-semibold text-purple-400">{entry.ai_score}</span>
                                         </div>
                                     )}
                                 </div>
@@ -168,6 +179,17 @@ export default function Leaderboard() {
         <div className="bg-slate-800/40 backdrop-blur-sm rounded-xl p-5 border border-slate-700/50 h-full flex flex-col">
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold text-gray-200">Top Players</h3>
+                <div className="flex items-center p-1 bg-slate-900/50 rounded-lg">         
+                    <button
+                        onClick={handleModeToggle}
+                        className="px-3 py-1 text-sm font-medium rounded-lg bg-slate-700 hover:bg-slate-600 transition-all text-white flex items-center gap-2"
+                    >
+                    <span className={`font-semibold ${modeDetails[mode].color}`}>
+                        {modeDetails[mode].label}
+                    </span>
+                    <span className="text-gray-400">⇄</span>
+                    </button>
+                </div>
                 <button 
                     onClick={handleManualRefresh}
                     className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50 transition-all"

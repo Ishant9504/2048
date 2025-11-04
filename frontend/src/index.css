@@ -53,3 +53,119 @@ button {
   cursor: pointer;
   transition: border-color 0.25s;
 }
+
+@layer utilities {
+  @keyframes flicker-up {
+    0%,
+    100% {
+      box-shadow: inset 0 3px 6px -3px rgba(34, 211, 238, 0.5);
+    }
+    /* 50% { box-shadow: inset 0 3px 10px -3px rgba(255, 255, 255, 0.9); } */
+    50% {
+      box-shadow: inset 0 3px 9px -4px rgba(165, 243, 252, 0.8);
+    }
+  }
+  @keyframes flicker-down {
+    0%,
+    100% {
+      box-shadow: inset 0 -3px 6px -3px rgba(34, 211, 238, 0.5);
+    }
+    50% {
+      box-shadow: inset 0 -3px 9px -4px rgba(165, 243, 252, 0.8);
+    }
+  }
+  @keyframes flicker-left {
+    0%,
+    100% {
+      box-shadow: inset 3px 0 6px -3px rgba(34, 211, 238, 0.5);
+    }
+    50% {
+      box-shadow: inset 3px 0 9px -4px rgba(165, 243, 252, 0.8);
+    }
+  }
+  @keyframes flicker-right {
+    0%,
+    100% {
+      box-shadow: inset -3px 0 6px -3px rgba(34, 211, 238, 0.5);
+    }
+    50% {
+      box-shadow: inset -3px 0 9px -4px rgba(165, 243, 252, 0.8);
+    }
+  }
+
+  .glow-up {
+    border-top-width: 3px;
+    animation: flicker-up 0.3s ease-in-out;
+  }
+  .glow-down {
+    border-bottom-width: 3px;
+    animation: flicker-down 0.3s ease-in-out;
+  }
+  .glow-left {
+    border-left-width: 3px;
+    animation: flicker-left 0.3s ease-in-out;
+  }
+  .glow-right {
+    border-right-width: 3px;
+    animation: flicker-right 0.3s ease-in-out;
+  }
+}
+
+@keyframes subtle-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+.subtle-pulse {
+  animation: subtle-pulse 2s ease-in-out infinite;
+}
+
+
+
+.animated-tile {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  background: linear-gradient(
+    135deg,
+    rgba(168, 85, 247, 0.3),
+    rgba(59, 130, 246, 0.3)
+  );
+  border-radius: 8px;
+  animation: tile-slide 2s ease-in-out infinite;
+}
+
+.animated-tile:nth-child(1) {
+  top: 10%;
+  left: 20%;
+  animation-delay: 0s;
+}
+.animated-tile:nth-child(2) {
+  top: 30%;
+  left: 60%;
+  animation-delay: 0.3s;
+}
+.animated-tile:nth-child(3) {
+  top: 50%;
+  left: 10%;
+  animation-delay: 0.6s;
+}
+.animated-tile:nth-child(4) {
+  top: 70%;
+  left: 70%;
+  animation-delay: 0.9s;
+}
+.animated-tile:nth-child(5) {
+  top: 20%;
+  left: 80%;
+  animation-delay: 1.2s;
+}
+.animated-tile:nth-child(6) {
+  top: 60%;
+  left: 40%;
+  animation-delay: 1.5s;
+}

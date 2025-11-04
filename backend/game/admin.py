@@ -1,3 +1,8 @@
 from django.contrib import admin
+from .models import AIModel, UserUnlocked, Game, GameState
 
-# Register your models here.
+# This is a simple way to register the models
+admin.site.register(AIModel)
+admin.site.register(UserUnlocked)
+admin.site.register(Game)
+admin.site.register(GameState)

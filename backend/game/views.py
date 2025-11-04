@@ -8,6 +8,7 @@ from .serializers import AISerializer, UserUnlockedSerializer, GameSerializer # 
 from django.contrib.auth import logout
 from django.conf import settings
 from django.http import JsonResponse
+from django.db.models import Sum, Case, When, IntegerField, F, Count
 
 # --- CSRF DIAGNOSTIC IMPORTS ---
 from django.views.decorators.csrf import csrf_exempt 
@@ -63,10 +64,34 @@ class AIModelListView(generics.ListAPIView):
     """
     List all available AI models.
     """
-    queryset = AIModel.objects.all()
+    queryset = AIModel.objects.all().order_by('tier', 'cost')
     serializer_class = AISerializer
     permission_classes = [permissions.AllowAny]
 
+    def list(self, request, *args, **kwargs):
+        # 1. Get the standard list of all AI models from the database
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        all_models_data = serializer.data
+
+        # 2. Check if the user is logged in
+        if request.user.is_authenticated:
+            # 3. If so, find the IDs of all AI models this user has unlocked
+            # Using a set for efficient lookups (O(1) average time complexity)
+            unlocked_ids = set(
+                UserUnlocked.objects.filter(user=request.user).values_list('ai_model_id', flat=True)
+            )
+            
+            # 4. Loop through the AI model data and add our new 'unlocked' field
+            for model in all_models_data:
+                model['unlocked'] = model['id'] in unlocked_ids
+        else:
+            # 5. If the user is not logged in, none of the models are unlocked for them
+            for model in all_models_data:
+                model['unlocked'] = False
+        
+        # 6. Return the newly enhanced data
+        return Response(all_models_data)
 # ----------------------------------------------------------------------
 # 2. PurchaseView (CRITICAL REVISIONS for security and atomicity + CSRF Diagnostic)
 # ----------------------------------------------------------------------
@@ -175,49 +200,63 @@ class LeaderboardView(APIView):
     """Get top players by high score or total points."""
     permission_classes = [permissions.AllowAny]
     
-    def get(self, request):
-        from users.models import Profile
+    def get(self, request):        
+        mode = request.query_params.get('mode', 'total') # Default to 'total'
+
+        # --- AI-ASSISTED LEADERBOARD ---
+        if mode == "ai":
+            # Find users who have played at least one AI game
+            ai_player_ids = Game.objects.filter(mode='ai').values_list('user_id', flat=True).distinct()
+            # Filter for those users and sort by their total AI score
+            leaderboard_data = Game.objects.filter(
+                user_id__in=ai_player_ids
+            ).values('user__username').annotate(
+                total_score=Sum('score'),
+                human_score=Sum(Case(When(mode='manual', then='score'), default=0, output_field=IntegerField())),
+                ai_score=Sum(Case(When(mode='ai', then='score'), default=0, output_field=IntegerField())),
+                games_played=Count('id')
+            ).order_by('-ai_score')[:10]
+
+        # --- HUMAN-ONLY LEADERBOARD ---
+        elif mode == 'human':
+            # Find users who have ever played an AI game
+            ai_player_ids = Game.objects.filter(mode='ai').values_list('user_id', flat=True).distinct()
+            # Exclude those users and calculate their total score from manual games
+            leaderboard_data = Game.objects.filter(
+                mode='manual'
+            ).exclude(
+                user_id__in=ai_player_ids
+            ).values('user__username').annotate(
+                total_score=Sum('score'),
+                games_played=Count('id')
+            ).order_by('-total_score')[:10]
         
-        sort_by = request.query_params.get('sort_by', 'high_score')
-        limit = request.query_params.get('limit', 10)
-        
-        try:
-            limit = min(int(limit), 50)
-        except ValueError:
-            limit = 10
-        
-        if sort_by == 'points':
-            # Leaderboard by total points
-            top_profiles = Profile.objects.select_related('user').order_by('-points')[:limit]
-            leaderboard = [
-                {
-                    'rank': idx + 1,
-                    'user': profile.user.username,
-                    'points': profile.points,
-                    'high_score': profile.high_score,
-                    'games_played': profile.games_played
-                }
-                for idx, profile in enumerate(top_profiles)
-            ]
+        # --- TOTAL SCORE LEADERBOARD  ---
         else:
-            # Leaderboard by high score (default)
-            top_profiles = Profile.objects.select_related('user').order_by('-high_score')[:limit]
-            leaderboard = [
-                {
-                    'rank': idx + 1,
-                    'user': profile.user.username,
-                    'high_score': profile.high_score,
-                    'score': profile.high_score,  # For compatibility with old frontend
-                    'points': profile.points,
-                    'games_played': profile.games_played
-                }
-                for idx, profile in enumerate(top_profiles)
-            ]
+             leaderboard_data = Game.objects.values(
+                'user__username'
+            ).annotate(
+                # This query now calculates all necessary fields for the breakdown.
+                total_score=Sum('score'),
+                human_score=Sum(Case(When(mode='manual', then='score'), default=0, output_field=IntegerField())),
+                ai_score=Sum(Case(When(mode='ai', then='score'), default=0, output_field=IntegerField())),
+                games_played=Count('id') 
+            ).order_by('-total_score')[:10] 
+
+        leaderboard_list = [
+            {
+                'rank': index + 1,
+                'username': entry['user__username'],
+                'total_score': entry['total_score'],
+                'games_played': entry['games_played'],
+                'human_score': entry.get('human_score', entry['total_score']), # Smart fallback for human-only mode
+                'ai_score': entry.get('ai_score', 0),
+            }
+            for index, entry in enumerate(leaderboard_data)
+        ]
         
-        return Response({
-            "success": True,
-            "data": leaderboard
-        }, status=status.HTTP_200_OK)
+        return Response(leaderboard_list)
+
 # ----------------------------------------------------------------------
 # 5. LogoutView (CRITICAL FIX FOR PERSISTENT SESSION TOKEN)
 # ----------------------------------------------------------------------
@@ -259,7 +298,52 @@ class LogoutView(APIView):
         )
         
         return response
-# game/views.py - ADD THESE TO YOUR EXISTING FILE (keep all your existing views)
+    
+    
+class UserAIProfileView(APIView):
+    """
+    Handles getting and setting a user's equipped AI and custom configurations.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Return the user's current AI profile."""
+        profile, created = Profile.objects.get_or_create(user=request.user)
+        
+        equipped_ai_data = None
+        # If an AI is equipped, serialize its data to send to the frontend
+        if profile.equipped_ai:
+            equipped_ai_data = AISerializer(profile.equipped_ai).data
+
+        response_data = {
+            'equipped_ai': equipped_ai_data,
+            'ai_configs': profile.ai_configs
+        }
+        return Response(response_data)
+
+    def post(self, request):
+        """Update the user's AI profile."""
+        profile, created = Profile.objects.get_or_create(user=request.user)
+
+        # Get data from the request
+        equipped_ai_id = request.data.get('equipped_ai_id')
+        new_configs = request.data.get('configs')
+
+        # Validate that the AI model exists
+        try:
+            ai_model = AIModel.objects.get(id=equipped_ai_id)
+            profile.equipped_ai = ai_model
+        except AIModel.DoesNotExist:
+            return Response({"error": "Invalid AI Model ID."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update the configurations
+        if isinstance(new_configs, dict):
+            profile.ai_configs[str(equipped_ai_id)] = new_configs
+        
+        profile.save()
+
+        return Response({"success": "AI profile updated."})
+    
 
 from rest_framework.views import APIView
 from rest_framework.response import Response

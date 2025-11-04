@@ -20,6 +20,17 @@ class Profile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Foreign key to the equipped agents of the users
+    equipped_ai = models.ForeignKey(
+        'game.AIModel', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True
+    )
+    
+    # User's custom slider settings
+    ai_configs = models.JSONField(default=dict)
+
     def __str__(self):
         return f"{self.user.username}'s Profile"
     

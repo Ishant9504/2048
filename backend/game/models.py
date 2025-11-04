@@ -3,10 +3,14 @@ from django.contrib.auth.models import User
 
 class AIModel(models.Model):
     name = models.CharField(max_length=100, unique=True)
+    agent_class = models.CharField(max_length=50)   # Example: Expectimax agent class 
     tier = models.IntegerField(default=1)
     cost = models.IntegerField(default=0)
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    base_params = models.JSONField(default=dict, blank=True)    # Parameters are "fixed" to the specific version of the agent
+    tunable_params = models.JSONField(default=dict)
+
     
     def __str__(self):
         return self.name
@@ -59,6 +63,10 @@ class GameState(models.Model):
     is_over = models.BooleanField(
         default=False,
         help_text="Whether the game is over"
+    )
+    ai_assisted = models.BooleanField(
+        default=False, 
+        help_text="True if an AI move has been requested for this game"
     )
     last_updated = models.DateTimeField(
         auto_now=True,

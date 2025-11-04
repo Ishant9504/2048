@@ -127,8 +127,6 @@ export const registerUser = async (username, password) => {
     }
 }
 
-// --- EXISTING FUNCTIONS (Unchanged, but provided for completeness) ---
-
 /**
  * Fetches the list of available AI Models. (Now publicly accessible if views.py was updated)
  */
@@ -177,22 +175,58 @@ export const purchaseAI = async (ai_model_id) => {
         };
     }
 }
+export const getUserAiProfile = async () => {
+  try {
+    const response = await axios.get(`${API_BASE}/user-ai-profile/`);
+    // The backend sends an object like: { equipped_ai: {...}, ai_configs: {...} }
+    // We also need to get the list of unlocked AI IDs for the UI.
+    const unlockedResponse = await axios.get(`${API_BASE}/ai-models/`); // Re-using the models list endpoint
+    
+    const unlockedIds = unlockedResponse.data.filter(model => model.unlocked).map(model => model.id);
 
+    return { 
+      success: true, 
+      data: {
+        ...response.data,
+        unlocked: unlockedIds, // Add the list of unlocked IDs
+      }
+    };
+  } catch (error) {
+    console.error("Failed to fetch user AI profile:", error);
+    return { success: false, error: error.response?.data?.error || error.message };
+  }
+};
 /**
- * Fetches the public leaderboard data.
+ * Saves the user's AI configuration.
+ * @param {number} equippedAiId - The ID of the AI model to equip.
+ * @param {object} configs - The dictionary of custom slider values for this AI.
  */
-export const fetchLeaderboard = async()=>{
-    try {
-        const res = await axios.get(`${API_BASE}/leaderboard/`)
-        return { data: res.data, success: true };
-    } catch (error) {
-        return { 
-            error: error.response?.data?.error || 'Failed to load leaderboard.', 
-            success: false 
-        };
-    }
-}
+export const saveUserAiProfile = async (equippedAiId, configs) => {
+  try {
+    const payload = {
+      equipped_ai_id: equippedAiId,
+      configs: configs
+    };
+    const response = await axios.post(`${API_BASE}/user-ai-profile/`, payload);
+    return { success: true, data: response.data };
+  } catch (error) {
+    console.error("Failed to save user AI profile:", error);
+    return { success: false, error: error.response?.data?.error || error.message };
+  }
+};
 
+export const getLeaderboard = async (mode) => {
+    try {
+        const response = await axios.get(`${API_BASE}/leaderboard/`, {
+            params: {mode}
+        })
+        // The backend sends the array directly.
+        return response.data; 
+    } catch (error) {
+        console.error(`Error fetching ${mode} leaderboard:`, error);
+        throw error;
+    }
+};
 /**
  * Fetches current logged in user information.
  * This is used to check authentication status and get user details.
@@ -285,25 +319,3 @@ export const getUserStats = async () => {
     }
 };
 
-/**
- * Get leaderboard with sorting options
- * @param {string} sortBy - 'high_score' or 'points'
- * @param {number} limit - Number of entries to return
- */
-export const getLeaderboard = async (sortBy = 'high_score', limit = 10) => {
-    try {
-        const res = await axios.get(`${API_BASE}/leaderboard/`, {
-            params: { sort_by: sortBy, limit }
-        });
-        return {
-            success: true,
-            data: res.data.data
-        };
-    } catch (error) {
-        console.error('Error fetching leaderboard:', error);
-        return {
-            success: false,
-            error: error.response?.data?.error || error.message
-        };
-    }
-};

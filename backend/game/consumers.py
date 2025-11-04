@@ -4,6 +4,9 @@ from channels.db import database_sync_to_async
 from .game_engine import Game2048
 import asyncio
 
+from .models import AIModel, UserUnlocked, GameState
+from users.models import Profile
+
 # Try to import AGENTS, but continue without them if not available
 try:
     from game.ai_agents import AGENTS
@@ -23,9 +26,46 @@ class GameConsumer(AsyncWebsocketConsumer):
         self.game_key = None 
         self.game = None
         self.authenticated_username = None
+        self.ai_cancellation_token = None
 
     @database_sync_to_async
-    def save_game_state(self, user_id, board, score, is_over):
+    def check_ai_unlocked(self, user_id, agent_name):
+        # Checks to see if the user has said agent unlocked
+        try:
+            ai_model = AIModel.objects.get(name= agent_name)
+            return UserUnlocked.objects.filter(user_id = user_id, ai_model = ai_model).exists()
+        except AIModel.DoesNotExist:
+            print(f"AI model {agent_name} not found in the database")
+            return False
+        except Exception as e:
+            print(f"Error unlocking AI: {e}")
+            return False
+    
+    @database_sync_to_async
+    def get_user_ai_params(self):
+        """Fetches the user's equipped AI and its combined parameters."""
+        try:
+            profile = Profile.objects.get(user_id=self.user_id)
+            if not profile.equipped_ai:
+                return None, None # No AI equipped
+
+            ai_model = profile.equipped_ai
+            
+            # Start with the AI's non-tunable base parameters (e.g., depth)
+            final_params = ai_model.base_params.copy()
+            
+            # Get the user's custom slider settings for this AI
+            user_specific_configs = profile.ai_configs.get(str(ai_model.id), {})
+            
+            # Merge the user's settings into the final parameters
+            final_params.update(user_specific_configs)
+            
+            return ai_model.agent_class, final_params
+        except Profile.DoesNotExist:
+            return None, None
+        
+    @database_sync_to_async
+    def save_game_state(self, user_id, board, score, is_over, ai_assisted):
         """Save current game state to database"""
         from django.contrib.auth.models import User
         from .models import GameState
@@ -40,7 +80,8 @@ class GameConsumer(AsyncWebsocketConsumer):
                 defaults={
                     'board_state': json.dumps(board),
                     'score': score,
-                    'is_over': is_over
+                    'is_over': is_over,
+                    "ai_assisted": ai_assisted
                 }
             )
             
@@ -113,7 +154,9 @@ class GameConsumer(AsyncWebsocketConsumer):
                                     "type": "broadcast_state",
                                     "board": game.board,
                                     "score": game.score,
-                                    "over": game.over
+                                    "over": game.over,
+                                    "ai_assisted": self.game.ai_assisted,
+                                    "last_move": self.game.last_move
                                 }
                             )
                         else:
@@ -270,7 +313,9 @@ class GameConsumer(AsyncWebsocketConsumer):
                 "board": self.game.board,
                 "score": self.game.score,
                 "over": self.game.over,
-                "username": self.authenticated_username
+                "username": self.authenticated_username,
+                "ai_assisted": self.game.ai_assisted,
+                "last_move": self.game.last_move
             }))
             print(f"Sent initial game state for {self.game_key}")
             
@@ -299,7 +344,8 @@ class GameConsumer(AsyncWebsocketConsumer):
                     self.user_id,
                     self.game.board,
                     self.game.score,
-                    self.game.over
+                    self.game.over,
+                    self.game.ai_assisted
                 )
                 print(f"✓ Game state saved to database")
                 
@@ -340,7 +386,8 @@ class GameConsumer(AsyncWebsocketConsumer):
                                 self.user_id,
                                 self.game.board,
                                 self.game.score,
-                                self.game.over
+                                self.game.over,
+                                self.game.ai_assisted
                             )
                         
                         if hasattr(self, 'channel_layer'):
@@ -351,7 +398,9 @@ class GameConsumer(AsyncWebsocketConsumer):
                                     "board": self.game.board,
                                     "score": self.game.score,
                                     "over": self.game.over,
-                                    "username": self.authenticated_username
+                                    "username": self.authenticated_username,
+                                    "ai_assisted": self.game.ai_assisted,
+                                    "last_move": self.game.last_move
                                 }
                             )
                         else:
@@ -363,12 +412,112 @@ class GameConsumer(AsyncWebsocketConsumer):
                                 "username": self.authenticated_username
                             }))
                         
-            elif data.get("type") == "ai":
-                agent_name = data.get("agent")
-                if agent_name:
-                    if self.ai_task: 
-                        self.ai_task.cancel()
-                    self.ai_task = asyncio.create_task(self.run_ai(self.game, agent_name))
+            elif data.get("type") == "get_ai_moves":
+                # agent_name = data.get("agent")
+                num_moves = int(data.get("num_moves", 5))
+
+                # User must be logged in
+                if not self.user_id:
+                    await self.send(text_data=json.dumps({"type": "error", "message": "You must be logged in to use AI."}))
+                    return
+                # A major issue with the longer AI calculations was server disconnection
+                # To solve this issue we are using this non blocking logic
+                # Define an async wrapper function which runs our task in the background
+                async def run_ai_in_background():
+                    # Immediately send a "thinking" message to the frontend.
+                    await self.send(text_data=json.dumps({"type": "ai_thinking"}))
+
+                    # Gets the necessary data from the database. This part is async.
+                    agent_class_name, params = await self.get_user_ai_params()
+                    if not agent_class_name:
+                        await self.send(text_data=json.dumps({"type": "error", "message": "No AI is equipped."}))
+                        return
+                    
+                    agent_cls = AGENTS.get(agent_class_name.lower())
+                    if not agent_cls:
+                        await self.send(text_data=json.dumps({"type": "error", "message": f"AI agent '{agent_class_name}' not found."}))
+                        return
+                        
+                    # Flag the game and save its state BEFORE starting the long task.
+                    self.game.ai_assisted = True
+                    await self.save_game_state(
+                        self.user_id, self.game.board, self.game.score, self.game.over, self.game.ai_assisted
+                    )
+
+                    # This will be used for cancelling mid operation
+                    self.ai_cancellation_token = {'cancelled': False}
+
+                    # THIS RIGHT HERE is the CPU-intensive function. This function MUST NOT use `await`.
+                    def heavy_calculation(token):
+                        print(f"[{self.channel_name}] Starting AI calculations in a background thread...")
+                        agent = agent_cls()
+                        sequence = agent.get_move_sequence(self.game, num_moves, params, token)
+                        print(f"[{self.channel_name}] ...Heavy AI calculation finished.")
+                        return sequence
+
+                    # Run the slow function in a separate thread.
+                    # The `await` here pauses `run_ai_in_background`, but NOT the main consumer.
+                    # The consumer is now free to handle other messages or ping-pong checks.
+                    # This makes sure the Daphne server doesn't hang up.
+                    move_sequence = await asyncio.to_thread(heavy_calculation, self.ai_cancellation_token)
+
+                    if self.ai_cancellation_token and not self.ai_cancellation_token.get('cancelled'):
+                        await self.send(text_data=json.dumps({
+                            "type": "ai_move_sequence",
+                            "moves": move_sequence
+                        }))
+                    else:
+                        print(f"[{self.channel_name}] AI calculation was cancelled. Not sending results.")
+                    
+                    # Clean up the token
+                    self.ai_cancellation_token = None
+
+                    # Once the background thread is done, send the final result.
+                    # await self.send(text_data=json.dumps({
+                    #     "type": "ai_move_sequence",
+                    #     "moves": move_sequence
+                    # }))
+
+
+                
+                # Start the background task. This returns control to the `receive` method instantly.
+                asyncio.create_task(run_ai_in_background())
+            
+            
+            elif data.get("type") == "commit_ai_moves":
+                final_board = data.get('board')
+                final_score = data.get('score')
+                
+                if final_board and final_score is not None:
+                    # Update the official game state
+                    self.game.board = final_board
+                    self.game.score = final_score
+                    self.game.over = self.game.is_game_over()
+                    print(f"AI moves committed for user {self.user_id}. New score: {self.game.score}")
+                    
+                    # Save the new state to the database
+                    if self.user_id:
+                        await self.save_game_state(self.user_id, self.game.board, self.game.score, self.game.over, self.game.ai_assisted)
+                    
+                    # Broadcast the final state to all connected clients for this user
+                    await self.channel_layer.group_send(
+                        self.group_name, 
+                        {
+                            "type": "broadcast_state",
+                            "board": self.game.board,
+                            "score": self.game.score,
+                            "over": self.game.over,
+                            "ai_assisted": self.game.ai_assisted,
+                            "last_move": self.game.last_move
+                        }
+                    )
+                else:
+                    await self.send(text_data=json.dumps({"type": "error", "message": "Invalid data for committing AI moves."}))
+
+            elif data.get("type") == "cancel_ai":
+                print(f"[{self.channel_name}] Received request to cancel AI.")
+                if self.ai_cancellation_token:
+                    self.ai_cancellation_token['cancelled'] = True
                     
             elif data.get("type") == "restart":
                 if self.ai_task: 
@@ -386,7 +535,8 @@ class GameConsumer(AsyncWebsocketConsumer):
                         self.user_id,
                         self.game.board,
                         self.game.score,
-                        self.game.over
+                        self.game.over,
+                        self.game.ai_assisted
                     )
                 
                 if hasattr(self, 'channel_layer'):
@@ -397,7 +547,9 @@ class GameConsumer(AsyncWebsocketConsumer):
                             "board": self.game.board,
                             "score": self.game.score,
                             "over": self.game.over,
-                            "username": self.authenticated_username
+                            "username": self.authenticated_username,
+                            "ai_assisted": self.game.ai_assisted,
+                            "last_move": self.game.last_move
                         }
                     )
                 else:
@@ -421,7 +573,9 @@ class GameConsumer(AsyncWebsocketConsumer):
                 "board": event["board"], 
                 "score": event["score"], 
                 "over": event["over"],
-                "username": event.get("username")
+                "username": event.get("username"),
+                "ai_assisted": event.get("ai_assisted", False),
+                "last_move": event.get("last_move")
             }))
         except Exception as e:
             print(f"Error in broadcast_state: {str(e)}")
