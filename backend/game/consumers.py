@@ -376,8 +376,8 @@ class GameConsumer(AsyncWebsocketConsumer):
                     self.ai_task = None
                 
                 # Create new game
-                active_games[self.game_key] = Game2048() 
-                self.game = active_games[self.game_key]
+                self.game = Game2048()
+                active_games[self.game_key] = self.game
                 print(f"Game restarted for {self.game_key}")
                 
                 # Save new game state

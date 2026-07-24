@@ -122,8 +122,8 @@ class PurchaseView(APIView):
         # 4. Atomic Update and Creation
         
         # Deduct points
-        user.profile.points -= ai_model.cost
-        user.profile.save()
+        profile.points -= ai_model.cost
+        profile.save()
         
         # Create unlock record
         UserUnlocked.objects.create(user=user, ai_model=ai_model)
@@ -155,8 +155,9 @@ class RecordGameView(APIView):
             
             # Add points (assuming user.profile exists and has a 'points' field)
             try:
-                request.user.profile.points += score
-                request.user.profile.save()
+                profile = request.user.profile
+                profile.points += score
+                profile.save()
             except AttributeError:
                  # Should be handled defensively if profile is not guaranteed
                  print(f">>> WARNING: Failed to update points for user {request.user.username}. Profile missing.")
@@ -259,16 +260,6 @@ class LogoutView(APIView):
         )
         
         return response
-# game/views.py - ADD THESE TO YOUR EXISTING FILE (keep all your existing views)
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status, permissions
-from django.db import transaction
-from .models import Game
-from users.models import Profile
-
-
 class CompleteGameView(APIView):
     """
     Save a completed game and award points to the user.
