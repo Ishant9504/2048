@@ -52,16 +52,8 @@ MIDDLEWARE = [
 ROOT_URLCONF = 'core.urls'
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True  # For development only, restrict in production
-CORS_ALLOW_CREDENTIALS = True  # Allow cookies to be sent with requests
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175", 
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-    "http://127.0.0.1:5175",
-]
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 CORS_EXPOSE_HEADERS = ["Content-Type", "X-CSRFToken"]
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
@@ -151,9 +143,6 @@ CHANNEL_LAYERS = {
     },
 }
 
-
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
-# CORS settings already defined above, removed duplicates
 
 # Allow CSRF exemption for API endpoints
 CSRF_COOKIE_SECURE = False

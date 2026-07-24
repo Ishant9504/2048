@@ -38,14 +38,15 @@ class GreedyAgent(BaseAgent):
 
         elif direction == "right":
             for r in range(4):
-                row = [v for v in copy[r] if v != 0][::-1]
+                rev = copy[r][::-1]
+                row = [v for v in rev if v != 0]
                 for i in range(len(row) - 1):
                     if row[i] == row[i + 1]:
                         score += row[i] * 2
                         row[i] *= 2
                         row[i + 1] = 0
                 row = [v for v in row if v != 0]
-                row = row[::-1] + [0] * (4 - len(row))
+                row = [0] * (4 - len(row)) + row[::-1]
                 if row != copy[r]:
                     moved = True
                 copy[r] = row
@@ -66,14 +67,15 @@ class GreedyAgent(BaseAgent):
 
         elif direction == "down":
             for c in range(4):
-                col = [copy[r][c] for r in range(4) if copy[r][c] != 0][::-1]
+                rev = [copy[r][c] for r in range(4)][::-1]
+                col = [v for v in rev if v != 0]
                 for i in range(len(col) - 1):
                     if col[i] == col[i + 1]:
                         score += col[i] * 2
                         col[i] *= 2
                         col[i + 1] = 0
                 col = [v for v in col if v != 0]
-                col = col[::-1] + [0] * (4 - len(col))
+                col = [0] * (4 - len(col)) + col[::-1]
                 for r in range(4):
                     if col[r] != copy[r][c]:
                         moved = True

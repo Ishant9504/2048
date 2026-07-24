@@ -122,10 +122,7 @@ class Game2048:
             print(f"Move {direction} was valid, new score: {self.score}")
         else:
             print(f"Move {direction} was invalid")
-            
-        # Return whether the move was valid
 
-        self.over = self.is_game_over()
         return moved
 
 
